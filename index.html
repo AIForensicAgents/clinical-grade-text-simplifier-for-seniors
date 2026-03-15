@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<title>Clinical-Grade Text Simplifier for Seniors</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/marked@9.1.6/marked.min.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        primary: '#1B4965',
+        primaryLight: '#5FA8D3',
+        accent: '#CAE9FF',
+        warm: '#FFF8F0',
+        warmDark: '#F5E6D3',
+        success: '#2D6A4F',
+        warning: '#E76F51',
+        textDark: '#1A1A2E',
+        textMed: '#4A4A6A',
+        textLight: '#6B7280',
+      },
+      fontFamily: {
+        sans: ['"Segoe UI"', 'system-ui', '-apple-system', 'sans-serif'],
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { -webkit-tap-highlight-color: transparent; }
+  body { font-size: 18px; }
+  .tooltip-word { border-bottom: 2px dotted #5FA8D3; cursor: help; position: relative; }
+  .tooltip-word:hover .tooltip-content,
+  .tooltip-word:focus .tooltip-content {
+    display: block;
+  }
+  .tooltip-content {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1B4965;
+    color: white;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 15px;
+    min-width: 200px;
+    max-width: 300px;
+    z-index: 50;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    line-height: 1.4;
+  }
+  .tooltip-content::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #1B4965;
+  }
+  .key-action {
+    background: #FEF3C7;
+    border-left: 4px solid #F59E0B;
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 8px 0;
+    font-weight: 600;
+  }
+  .fade-in { animation: fadeIn 0.4s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .pulse-gentle { animation: pulseGentle 2s infinite; }
+  @keyframes pulseGentle { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+  textarea { font-size: 17px; }
+  .spinner { border: 3px solid #CAE9FF; border-top: 3px solid #1B4965; border-radius: 50%; width: 28px; height: 28px; animation: spin 0.8s linear infinite; display: inline-block; }
+  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  .reading-level-badge { display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 20px; font-size: 14px; font-weight: 600; }
+  .clinician-note {
+    background: #EFF6FF;
+    border: 1px solid #93C5FD;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 8px 0;
+    font-size: 15px;
+  }
+  .original-phrase {
+    background: #FEE2E2;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-decoration: line-through;
+    font-size: 14px;
+  }
+  .simplified-phrase {
+    background: #D1FAE5;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .tab-btn {
+    min-height: 48px;
+    transition: all 0.2s;
+  }
+  .tab-btn.active {
+    background: #1B4965;
+    color: white;
+    box-shadow: 0 2px 8px rgba(27,73,101,0.3);
+  }
+  .history-item {
+    transition: all 0.15s;
+  }
+  .history-item:active {
+    transform: scale(0.98);
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    height: 8px;
+    border-radius: 4px;
+    background: #CAE9FF;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #1B4965;
+    cursor: pointer;
+  }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border-width: 0; }
+</style>
+</head>
+<body class="bg-warm min-h-screen">
+
+<!-- Global AI Tracking -->
+<script>
+window.aiTotalInputTokens = 0;
+window.aiTotalOutputTokens = 0;
+window.aiTotalTime = 0;
+window.aiTimeByAlias = {};
+</script>
+
+<div id="app" class="max-w-2xl mx-auto px-4 pb-32">
+  <!-- Header -->
+  <header class="sticky top-0 z-40 bg-warm/95 backdrop-blur-sm pt-4 pb-3 border-b border-warmDark/30">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-bold text-primary flex items-center gap-2">
+          📄 <span>ClearText</span><span class="text-primaryLight text-sm font-normal">for Seniors</span>
+        </h1>
+        <p class="text-xs text-textLight mt-0.5">Clinical-Grade Document Simplifier</p>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="showHistory()" class="w-11 h-11 rounded-full bg-accent/60 flex items-center justify-center text-primary hover:bg-accent transition" aria-label="History">
+          📋
+        </button>
+        <button onclick="showSettings()" class="w-11 h-11 rounded-full bg-accent/60 flex items-center justify-center text-primary hover:bg-accent transition" aria-label="Settings">
+          ⚙️
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Mode Tabs -->
+  <div class="flex gap-2 mt-4 mb-4" role="tablist">
+    <button role="tab" class="tab-btn flex-1 rounded-xl px-4 py-3 text-sm font-semibold bg-warmDark text-textMed active" data-mode="senior" onclick="switchMode('senior')">
+      👵 Senior View
+    </button>
+    <button role="tab" class="tab-btn flex-1 rounded-xl px-4 py-3 text-sm font-semibold bg-warmDark text-textMed" data-mode="clinician" onclick="switchMode('clinician')">
+      🩺 Clinician Review
+    </button>
+  </div>
+
+  <!-- Input Section -->
+  <section id="inputSection" class="fade-in">
+    <div class="bg-white rounded-2xl shadow-sm border border-warmDark/20 p-4 mb-4">
+      <label for="docInput" class="block text-sm font-semibold text-primary mb-2">
+        📝 Paste your document here
+      </label>
+      <textarea 
+        id="docInput" 
+        rows="6" 
+        class="w-full border-2 border-accent rounded-xl p-4 text-textDark focus:border-primaryLight focus:ring-2 focus:ring-primaryLight/20 outline-none resize-y transition"
+        placeholder="Paste medical instructions, discharge summaries, insurance letters, medication guides, or any complex document..."
+        aria-describedby="inputHint"
+      ></textarea>
+      <p id="inputHint" class="text-xs text-textLight mt-2">
+        💡 Works best with medical, legal, and financial documents. Up to 5,000 words.
+      </p>
+    </div>
+
+    <!-- Reading Level Selector -->
+    <div class="bg-white rounded-2xl shadow-sm border border-warmDark/20 p-4 mb-4">
+      <label class="block text-sm font-semibold text-primary mb-3">
+        📊 Target Reading Level
+      </label>
+      <div class="flex items-center gap-4">
+        <span class="text-xs text-textLight min-w-[60px]">Simple</span>
+        <input type="range" id="readingLevel" min="1" max="5" value="2" class="flex-1" aria-label="Reading level from 1 simple to 5 advanced">
+        <span class="text-xs text-textLight min-w-[60px] text-right">Advanced</span>
+      </div>
+      <div class="text-center mt-2">
+        <span id="levelLabel" class="reading-level-badge bg-green-100 text-green-800">Level 2 — Easy to Read</span>
+      </div>
+      <div class="mt-3 text-xs text-textLight">
+        <span id="levelDesc">Best for most seniors. Short sentences, common words, clear actions.</span>
+      </div>
+    </div>
+
+    <!-- Document Type -->
+    <div class="bg-white rounded-2xl shadow-sm border border-warmDark/20 p-4 mb-4">
+      <label for="docType" class="block text-sm font-semibold text-primary mb-2">
+        📂 Document Type
+      </label>
+      <select id="docType" class="w-full border-2 border-accent rounded-xl p-3 text-textDark bg-white focus:border-primaryLight outline-none min-h-[48px]">
+        <option value="medical">🏥 Medical (discharge notes, lab results)</option>
+        <option value="medication">💊 Medication Instructions</option>
+        <option value="insurance">📑 Insurance / Benefits</option>
+        <option value="legal">⚖️ Legal Documents</option>
+        <option value="financial">💰 Financial Statements</option>
+        <option value="general">📄 General Document</option>
+      </select>
+    </div>
+
+    <!-- Primary Action Button -->
+    <button 
+      id="simplifyBtn"
+      onclick="simplifyDocument()" 
+      class="w-full bg-primary hover:bg-primary/90 active:scale-[0.98] text-white font-bold text-lg rounded-2xl py-4 px-6 shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-3 min-h-[56px] pulse-gentle"
+    >
+      ✨ Simplify Document
+    </button>
+
+    <p class="text-center text-xs text-textLight mt-2 mb-6">
+      🔒 Your documents are processed securely and not stored on our servers
+    </p>
+  </section>
+
+  <!-- Loading State -->
+  <section id="loadingSection" class="hidden fade-in">
+    <div class="bg-white rounded-2xl shadow-sm border border-warmDark/20 p-8 text-center">
+      <div class="spinner mx-auto mb-4"></div>
+      <p class="text-primary font-semibold text-lg">Simplifying your document...</p>
+      <p class="text-textLight text-sm mt-2" id="loadingStatus">Analyzing reading level and key terms</p>
+      <div class="mt-4 bg-accent/30 rounded-full h-2 overflow-hidden">
+        <div id="progressBar" class="bg-primaryLight h-2 rounded-full transition-all duration-1000" style="width: 10%"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Results Section - Senior View -->
+  <section id="resultSection" class="hidden fade-in">
+    <!-- Result Header -->
+    <div class="bg-white rounded-2xl shadow-sm border border-warmDark/20 p-4 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-bold text-primary">✅ Simplified Version</h2>
+        <span id="resultLevel" class="reading-level-badge bg-green-100 text-green-800 text-xs"></span>
+      </div>
+      
+      <!-- Key Actions -->
+      <div id="keyActions" class="mb-4"></div>
+
+      <!-- Simplified Text -->
+      <div id="simplifiedText" class="text-textDark leading-relaxed text-lg"></div>
+
+      <!-- Glossary -->
+      <div id="glossarySection" class="mt-4 pt-4 border-t border-warmDark/20">
+        <h3 class="text-sm font-semibold text-primary mb-2">📖 Glossary — Tap a word for its meaning</h3>
+        <div id="glossaryList" class="flex flex-wrap gap-2"></div>
+      </div>
+    </div>
+
+    <!-- Audio Section -->
+    <div class="bg-white rounded-2xl shadow-sm border border-warmDark/20 p-4 mb-4">
+      <h3 class="text-sm font-semibold text-primary mb-3">🔊 Listen to this document</h3>
+      <div class="flex gap-2">
+        <button onclick="speakText()" id="speakBtn" class="flex-1 bg-primaryLight/20 hover:bg-primaryLight/30 text-primary font-semibold rounded-xl py-3 px-4 transition min-h-[48px] flex items-center justify-center gap-2">
+          ▶️ Play
+        </button>
+        <button onclick="stopSpeech()" class="bg-warning/10 hover:bg-warning/20 text-warning font-semibold rounded-xl py-3 px-6 transition min-h-[48px]">
+          ⏹ Stop
+        </button>
+      </div>
+      <div class="mt-3 flex items-center gap-3">
+        <label class="text-xs text-textLight">Speed:</label>
+        <input type="range" id="speechSpeed" min="0.5" max="1.5" step="0.1" value="0.8" class="flex-1" aria-label="Speech speed">
+        <span id="speedLabel" class="text-xs text-textMed font-mono">0.8x</span>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex gap-3 mb-4">
+      <button onclick="copyResult()" class="flex-1 bg-white border-2 border-accent hover:border-primaryLight text-primary font-semibold rounded-xl py-3 transition min-h-[48px]">
+        📋 Copy
+      </button>
+      <button onclick="startOver()" class="flex-1 bg-white border-2 border-accent hover:border-primaryLight text-primary font-semibold rounded-xl py-3 transition min-h-[48px]">
+        🔄 New
+      </button>
+    </div>
+  </section>
+
+  <!-- Clinician Review Section -->
+  <section id="clinicianSection" class="hidden fade-in">
+    <div class="bg-white rounded-2xl shadow-sm border border-warmDark/20 p-4 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-bold text-primary">🩺 Clinician Review</h2>
+        <button onclick="approveAll()" class="bg-success/10 text-success font-semibold text-sm rounded-lg px-3 py-2 min-h-[40px]">
+          ✅ Approve All
+        </button>
+      </div>
+      <p class="text-sm text-textLight mb-4">Review each simplification. Original phrasing is preserved with suggested changes and clinical justification.</p>
+      <div id="clinicianReview"></div>
+    </div>
+
+    <div class="flex gap-3 mb-4">
+      <button onclick="exportReview()" class="flex-1 bg-primary text-white font-semibold rounded-xl py-3 transition min-h-[48px]">
+        📥 Export Review
+      </button>
+      <button onclick="startOver()" class="flex-1 bg-white border-2 border-accent text-primary font-semibold rounded-xl py-3 transition min-h-[48px]">
+        🔄 New
+      </button>
+    </div>
+  </section>
+
+  <!-- History Modal -->
+  <div id="historyModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="bg-warm rounded-t-3xl sm:rounded-3xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
+      <div class="p-4 border-b border-warmDark/20 flex items-center justify-between">
+        <h2 class="text-lg font-bold text-primary">📋 Recent Simplifications</h2>
+        <button onclick="closeHistory()" class="w-10 h-10 rounded-full bg-warmDark/30 flex items-center justify-center text-textMed" aria-label="Close">✕</button>
+      </div>
+      <div id="historyList" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="bg-warm rounded-t-3xl sm:rounded-3xl w-full max-w-lg overflow-hidden">
+      <div class="p-4 border-b border-warmDark/20 flex items-center justify-between">
+        <h2 class="text-lg font-bold text-primary">⚙️ Settings</h2>
+        <button onclick="closeSettings()" class="w-10 h-10 rounded-full bg-warmDark/30 flex items-center justify-center text-textMed" aria-label="Close">✕</button>
+      </div>
+      <div class="p-4 space-y-4">
+        <div>
+          <label class="block text-sm font-semibold text-primary mb-2">🔤 Font Size</label>
+          <div class="flex gap-2">
+            <button onclick="setFontSize(16)" class="flex-1 bg-white border-2 border-accent rounded-xl py-3 min-h-[48px] text-sm font-semibold">A Small</button>
+            <button onclick="setFontSize(18)" class="flex-1 bg-primary text-white border-2 border-primary rounded-xl py-3 min-h-[48px] text-base font-semibold">A Medium</button>
+            <button onclick="setFontSize(22)" class="flex-1 bg-white border-2 border-accent rounded-xl py-3 min-h-[48px] text-lg font-semibold">A Large</button>
+          </div>
+        </div>
+        <div>
+          <label class="flex items-center gap-3 cursor-pointer min-h-[48px]">
+            <input type="checkbox" id="highContrast" onchange="toggleContrast()" class="w-5 h-5 rounded">
+            <span class="text-sm font-semibold text-primary">🌓 High Contrast Mode</span>
+          </label>
+        </div>
+        <div>
+          <label class="flex items-center gap-3 cursor-pointer min-h-[48px]">
+            <input type="checkbox" id="autoSpeak" class="w-5 h-5 rounded">
+            <span class="text-sm font-semibold text-primary">🔊 Auto-read simplified text</span>
+          </label>
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-primary mb-2">👤 Default User</label>
+          <input type="text" id="userName" placeholder="Patient or caregiver name" class="w-full border-2 border-accent rounded-xl p-3 text-textDark focus:border-primaryLight outline-none min-h-[48px]">
+        </div>
+        <button onclick="saveSettings(); closeSettings()" class="w-full bg-primary text-white font-semibold rounded-xl py-3 min-h-[48px]">💾 Save Settings</button>
+        <button onclick="clearHistory()" class="w-full bg-warning/10 text-warning font-semibold rounded-xl py-3 min-h-[48px]">🗑️ Clear All History</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error Toast -->
+  <div id="toast" class="hidden fixed bottom-20 left-4 right-4 max-w-lg mx-auto bg-white border-2 border-warning rounded-2xl shadow-xl p-4 z-50 fade-in">
+    <p id="toastMsg" class="text-sm text-textDark"></p>
+  </div>
+</div>
+
+<script>
+(function() {
+  // State
+  let currentMode = 'senior';
+  let lastResult = null;
+  let lastClinician = null;
+
+  const API_BASE = 'https://16504442930.work';
+
+  // Reading level config
+  const levelConfig = {
+    1: { label: 'Level 1 — Very Simple', desc: 'Very short sentences. Only basic words. Best for significant cognitive challenges.', color: 'bg-green-200 text-green-900', grade: '3rd-4th grade' },
+    2: { label: 'Level 2 — Easy to Read', desc: 'Best for most seniors. Short sentences, common words, clear actions.', color: 'bg-green-100 text-green-800', grade: '5th-6th grade' },
+    3: { label: 'Level 3 — Moderate', desc: 'Somewhat simplified. Good for caregivers or higher-literacy seniors.', color: 'bg-yellow-100 text-yellow-800', grade: '7th-8th grade' },
+    4: { label: 'Level 4 — Detailed', desc: 'Preserves more technical language with definitions. Good for informed patients.', color: 'bg-orange-100 text-orange-800', grade: '9th-10th grade' },
+    5: { label: 'Level 5 — Near-Original', desc: 'Minimal changes. Mostly adds clarifications and glossary. For clinician reference.', color: 'bg-red-100 text-red-800', grade: '11th+ grade' }
+  };
+
+  // Init
+  document.addEventListener('DOMContentLoaded', () => {
+    loadSettings();
+    setupReadingLevelSlider();
+    setupSpeechSpeed();
+    loadDraft();
+  });
+
+  function setupReadingLevelSlider() {
+    const slider = document.getElementById('readingLevel');
+    slider.addEventListener('input', () => updateLevelDisplay(slider.value));
+    updateLevelDisplay(slider.value);
+  }
+
+  function updateLevelDisplay(val) {
+    const cfg = levelConfig[val];
+    document.getElementById('levelLabel').textContent = cfg.label;
+    document.getElementById('levelLabel').className = `reading-level-badge ${cfg.color}`;
+    document.getElementById('levelDesc').textContent = cfg.desc;
+  }
+
+  function setupSpeechSpeed() {
+    const slider = document.getElementById('speechSpeed');
+    slider.addEventListener('input', () => {
+      document.getElementById('speedLabel').textContent = slider.value + 'x';
+    });
+  }
+
+  // Mode switching
+  window.switchMode = function(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    if (lastResult) {
+      if (mode === 'senior') {
+        document.getElementById('resultSection').classList.remove('hidden');
+        document.getElementById('clinicianSection').classList.add('hidden');
+      } else {
+        document.getElementById('resultSection').classList.add('hidden');
+        document.getElementById('clinicianSection').classList.remove('hidden');
+        if (!lastClinician) generateClinicianReview();
+      }
+    }
+  };
+
+  // AI Call with retry
+  async function callAI(alias, params, retries = 3) {
+    const startTime = Date.now();
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const resp = await fetch(`${API_BASE}/run_prompt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ alias, params })
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          if (attempt < retries - 1) continue;
+          throw new Error(`API Error (${resp.status}): ${errText}`);
+        }
+        const data = await resp.json();
+        const elapsed = Date.now() - startTime;
+        // Track tokens and time
+        if (data.input_tokens) window.aiTotalInputTokens += data.input_tokens;
+        if (data.output_tokens) window.aiTotalOutputTokens += data.output_tokens;
+        window.aiTotalTime += elapsed;
+        if (!window.aiTimeByAlias[alias]) window.aiTimeByAlias[alias] = 0;
+        window.aiTimeByAlias[alias] += elapsed;
+        return data;
+      } catch (err) {
+        if (attempt < retries - 1) {
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        // Format error with AI
+        try {
+          const errResp = await fetch(`${API_BASE}/run_prompt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              alias: 'genericAI',
+              params: {
+                prompt: `You are a helpful assistant for seniors. Rewrite this error message to be friendly, clear, and empowering so the user knows what to do next. Error: "${err.message}". Full API response: "${String(err)}". Return a JSON object with exactly this structure: {"friendly_message": string (the friendly error message), "suggestion": string (what the user can try)}`
+              }
+            })
+          });
+          if (errResp.ok) {
+            const errData = await errResp.json();
+            throw new Error(`${errData.friendly_message || err.message} — ${errData.suggestion || 'Please try again.'}`);
+          }
+        } catch(e2) {
+          // ignore formatting error
+        }
+        throw err;
+      }
+    }
+  }
+
+  // Save/Load draft
+  function saveDraft() {
+    const text = document.getElementById('docInput').value;
+    if (text) localStorage.setItem('cleartext_draft', text);
+  }
+
+  function loadDraft() {
+    const draft = localStorage.getItem('cleartext_draft');
+    if (draft) document.getElementById('docInput').value = draft;
+  }
+
+  // Main simplify function
+  window.simplifyDocument = async function() {
+    const text = document.getElementById('docInput').value.trim();
+    if (!text) {
+      showToast('📝 Please paste a document first!');
+      return;
+    }
+    if (text.length < 20) {
+      showToast('📝 The text seems too short. Please paste a complete document.');
+      return;
+    }
+
+    saveDraft();
+    lastClinician = null;
+
+    // Show loading
+    document.getElementById('inputSection').classList.add('hidden');
+    document.getElementById('resultSection').classList.add('hidden');
+    document.getElementById('clinicianSection').classList.add('hidden');
+    document.getElementById('loadingSection').classList.remove('hidden');
+
+    const level = document.getElementById('readingLevel').value;
+    const docType = document.getElementById('docType').value;
+    const cfg = levelConfig[level];
+
+    try {
+      updateProgress(20, 'Understanding the document structure...');
+
+      const prompt = `You are a clinical-grade document simplifier specialized in geriatric health literacy. Your task is to simplify the following ${docType} document to a ${cfg.grade} reading level (Level ${level}/5).
+
+RULES:
+1. PRESERVE ALL MEDICAL/LEGAL ACCURACY. Never change meanings, dosages, dates, names, or critical details.
+2. Simplify vocabulary and sentence structure to match the target grade level.
+3. Use short sentences (max 15-20 words for Level 1-2, up to 25 for Level 3-4).
+4. Replace jargon with plain language but keep critical terms with definitions.
+5. Highlight KEY ACTIONS the reader must take (appointments, medications, deadlines).
+6. Create a glossary of important terms with simple definitions.
+7. Organize information with clear headings.
+8. Use active voice and second person ("you" instead of "the patient").
+
+DOCUMENT TO SIMPLIFY:
+"""
+${text.substring(0, 12000)}
+"""
+
+Return a JSON object with EXACTLY this structure:
+{
+  "simplified_text": string (the complete simplified document with markdown formatting: use ## for headings, **bold** for emphasis, bullet points for lists),
+  "key_actions": string[] (array of 1-6 strings, each a critical action the reader must take, phrased as clear instructions starting with a verb),
+  "glossary": object[] (array of objects each with "term": string and "definition": string, include 3-15 important terms),
+  "reading_level_achieved": string (the estimated reading grade level of your output, e.g. "5th grade"),
+  "accuracy_notes": string (brief note about any nuances that were simplified and might need clinician verification),
+  "summary": string (1-2 sentence plain language summary of the entire document)
+}`;
+
+      updateProgress(40, 'Simplifying complex language...');
+
+      const result = await callAI('genericAI', { prompt });
+
+      updateProgress(70, 'Formatting results...');
+
+      lastResult = result;
+
+      // Render results
+      renderSeniorView(result);
+
+      updateProgress(100, 'Done!');
+
+      // Save to history
+      saveToHistory(text, result);
+
+      await new Promise(r => setTimeout(r, 400));
+
+      document.getElementById('loadingSection').classList.add('hidden');
+      
+      if (currentMode === 'senior') {
+        document.getElementById('resultSection').classList.remove('hidden');
+      } else {
+        document.getElementById('clinicianSection').classList.remove('hidden');
+        generateClinicianReview();
+      }
+
+      // Auto-speak
+      if (document.getElementById('autoSpeak')?.checked) {
+        setTimeout(() => speakText(), 500);
+      }
+
+    } catch (err) {
+      document.getElementById('loadingSection').classList.add('hidden');
+      document.getElementById('inputSection').classList.remove('hidden');
+      showToast(`❌ ${err.message || 'Something went wrong. Please try again.'}`);
+    }
+  };
+
+  function renderSeniorView(data) {
+    // Key actions
+    const actionsHtml = (data.key_actions || []).map(action =>
+      `<div class="key-action">⚡ ${escapeHtml(action)}</div>`
+    ).join('');
+    document.getElementById('keyActions').innerHTML = actionsHtml.length > 0 ? 
+      `<h3 class="text-sm font-semibold text-warning mb-2">🔔 Important — Things You Need To Do:</h3>${actionsHtml}` : '';
+
+    // Summary
+    const summary = data.summary ? `<div class="bg-accent/40 rounded-xl p-4 mb-4 text-primary font-medium">${escapeHtml(data.summary)}</div>` : '';
+
+    // Simplified text with glossary tooltips
+    let simplifiedHtml = marked.parse(data.simplified_text || '');
+    
+    // Add tooltip spans for glossary terms
+    const glossary = data.glossary || [];
+    glossary.forEach(item => {
+      const regex = new RegExp(`\\b(${escapeRegex(item.term)})\\b`, 'gi');
+      simplifiedHtml = simplifiedHtml.replace(regex, (match) =>
+        `<span class="tooltip-word" tabindex="0" role="button" aria-label="${escapeHtml(item.term)}: ${escapeHtml(item.definition)}">${match}<span class="tooltip-content" role="tooltip">${escapeHtml(item.definition)}</span></span>`
+      );
+    });
+
+    document.getElementById('simplifiedText').innerHTML = summary + simplifiedHtml;
+
+    // Glossary list
+    const glossaryHtml = glossary.map(item =>
+      `<span class="inline-flex items-center bg-accent/40 rounded-lg px-3 py-1.5 text-sm text-primary cursor-help" title="${escapeHtml(item.definition)}">${escapeHtml(item.term)}</span>`
+    ).join('');
+    document.getElementById('glossaryList').innerHTML = glossaryHtml;
+    document.getElementById('glossarySection').classList.toggle('hidden', glossary.length === 0);
+
+    // Reading level badge
+    const levelAchieved = data.reading_level_achieved || '';
+    document.getElementById('resultLevel').textContent = `📊 ${levelAchieved}`;
+  }
+
+  // Clinician review
+  async function generateClinicianReview() {
+    if (!lastResult) return;
+    const text = document.getElementById('docInput').value.trim();
+
+    document.getElementById('clinicianReview').innerHTML = `
+      <div class="text-center py-8">
+        <div class="spinner mx-auto mb-3"></div>
+        <p class="text-sm text-textLight">Generating clinician review with justification notes...</p>
+      </div>
+    `;
+
+    try {
+      const prompt = `You are a clinical documentation specialist. Compare the original medical/legal document with its simplified version and create a clinician review that tracks each significant simplification.
+
+ORIGINAL DOCUMENT (excerpt):
+"""
+${text.substring(0, 6000)}
+"""
+
+SIMPLIFIED VERSION SUMMARY:
+"""
+${lastResult.simplified_text?.substring(0, 4000) || ''}
+"""
+
+KEY ACCURACY NOTES FROM SIMPLIFICATION: ${lastResult.accuracy_notes || 'None'}
+
+For each significant change, provide the original phrase, the simplified version, a clinical justification for the change, and a risk assessment.
+
+Return a JSON object with EXACTLY this structure:
+{
+  "changes": object[] (array of 5-15 objects each with: "original": string (the original complex phrase), "simplified": string (the simplified version), "justification": string (clinical reason this change is appropriate), "risk": string (one of "low", "medium", "high" - risk of meaning loss), "category": string (one of "vocabulary", "structure", "omission", "reframing")),
+  "overall_accuracy": string (one of "high", "moderate", "needs_review" - overall accuracy assessment),
+  "clinician_recommendations": string[] (array of 1-4 strings, things the clinician should verify or discuss with the patient),
+  "approval_summary": string (brief summary for clinical records that this simplification was reviewed)
+}`;
+
+      const result = await callAI('genericAI', { prompt });
+      lastClinician = result;
+      renderClinicianReview(result);
+    } catch (err) {
+      document.getElementById('clinicianReview').innerHTML = `<p class="text-warning text-sm">❌ ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function renderClinicianReview(data) {
+    const riskColors = { low: 'bg-green-100 text-green-800', medium: 'bg-yellow-100 text-yellow-800', high: 'bg-red-100 text-red-800' };
+    const accuracyColors = { high: 'text-success', moderate: 'text-yellow-600', 'needs_review': 'text-warning' };
+
+    let html = `
+      <div class="flex items-center gap-2 mb-4 p-3 rounded-xl ${data.overall_accuracy === 'high' ? 'bg-green-50' : data.overall_accuracy === 'moderate' ? 'bg-yellow-50' : 'bg-red-50'}">
+        <span class="text-lg">${data.overall_accuracy === 'high' ? '✅' : data.overall_accuracy === 'moderate' ? '⚠️' : '🔍'}</span>
+        <span class="font-semibold ${accuracyColors[data.overall_accuracy] || ''}">Overall Accuracy: ${data.overall_accuracy?.toUpperCase() || 'Unknown'}</span>
+      </div>
+    `;
+
+    // Recommendations
+    if (data.clinician_recommendations?.length) {
+      html += `<div class="mb-4 p-3 bg-blue-50 rounded-xl"><h4 class="text-sm font-semibold text-blue-800 mb-2">📋 Clinician Recommendations:</h4><ul class="list-disc list-inside text-sm text-blue-700 space-y-1">`;
+      data.clinician_recommendations.forEach(rec => { html += `<li>${escapeHtml(rec)}</li>`; });
+      html += `</ul></div>`;
+    }
+
+    // Changes
+    (data.changes || []).forEach((change, i) => {
+      html += `
+        <div class="clinician-note mb-3" id="change-${i}">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-blue-600 uppercase">${escapeHtml(change.category || '')}</span>
+            <span class="reading-level-badge text-xs ${riskColors[change.risk] || 'bg-gray-100'}">Risk: ${change.risk || 'unknown'}</span>
+          </div>
+          <div class="mb-2">
+            <span class="original-phrase">${escapeHtml(change.original || '')}</span>
+            <span class="mx-2">→</span>
+            <span class="simplified-phrase">${escapeHtml(change.simplified || '')}</span>
+          </div>
+          <p class="text-xs text-textMed italic">💡 ${escapeHtml(change.justification || '')}</p>
+          <div class="flex gap-2 mt-2">
+            <button onclick="approveChange(${i})" class="text-xs bg-success/10 text-success rounded-lg px-3 py-1.5 font-semibold min-h-[36px]">✅ Approve</button>
+            <button onclick="flagChange(${i})" class="text-xs bg-warning/10 text-warning rounded-lg px-3 py-1.5 font-semibold min-h-[36px]">🚩 Flag</button>
+          </div>
+        </div>
+      `;
+    });
+
+    document.getElementById('clinicianReview').innerHTML = html;
+  }
+
+  window.approveChange = function(i) {
+    const el = document.getElementById(`change-${i}`);
+    if (el) {
+      el.style.opacity = '0.5';
+      el.querySelector('button')?.replaceWith(Object.assign(document.createElement('span'), { className: 'text-xs text-success font-semibold', textContent: '✅ Approved' }));
+    }
+  };
+
+  window.flagChange = function(i) {
+    const el = document.getElementById(`change-${i}`);
+    if (el) {
+      el.style.borderColor = '#E76F51';
+      el.querySelector('button:last-child')?.replaceWith(Object.assign(document.createElement('span'), { className: 'text-xs text-warning font-semibold', textContent: '🚩 Flagged for review' }));
+    }
+  };
+
+  window.approveAll = function() {
+    document.querySelectorAll('[id^="change-"]').forEach((el, i) => {
+      el.style.opacity = '0.6';
+    });
+    showToast('✅ All simplifications approved for clinical records.');
+  };
+
+  window.exportReview = function() {
+    if (!lastClinician) return;
+    const text = `CLINICAL REVIEW - Document Simplification\nDate: ${new Date().toLocaleDateString()}\nOverall Accuracy: ${lastClinician.overall_accuracy}\n\n${lastClinician.approval_summary || ''}\n\nChanges:\n${(lastClinician.changes || []).map((c, i) => `${i + 1}. [${c.risk}] ${c.original} → ${c.simplified}\n   Justification: ${c.justification}`).join('\n\n')}`;
+    
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `clinical-review-${Date.now()}.txt`;
+    a.click();
+    showToast('📥 Review exported successfully!');
+  };
+
+  // Speech
+  window.speakText = function() {
+    if (!lastResult?.simplified_text) return;
+    window.speechSynthesis.cancel();
+    
+    // Strip markdown
+    const plainText = lastResult.simplified_text.replace(/[#*_`\[\]]/g, '').replace(/\n+/g, '. ');
+    
+    const utterance = new SpeechSynthesisUtterance(plainText);
+    utterance.rate = parseFloat(document.getElementById('speechSpeed').value);
+    utterance.pitch = 1;
+    utterance.lang = 'en-US';
+    
+    // Try to find a clear voice
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find(v => v.name.includes('Samantha') || v.name.includes('Google US') || v.name.includes('Microsoft Zira'));
+    if (preferred) utterance.voice = preferred;
+
+    window.speechSynthesis.speak(utterance);
+    document.getElementById('speakBtn').innerHTML = '⏸️ Speaking...';
+    utterance.onend = () => { document.getElementById('speakBtn').innerHTML = '▶️ Play'; };
+  };
+
+  window.stopSpeech = function() {
+    window.speechSynthesis.cancel();
+    document.getElementById('speakBtn').innerHTML = '▶️ Play';
+  };
+
+  // Copy
+  window.copyResult = function() {
+    if (!lastResult?.simplified_text) return;
+    const actions = (lastResult.key_actions || []).map(a => `⚡ ${a}`).join('\n');
+    const text = `${lastResult.summary || ''}\n\n${actions ? 'KEY ACTIONS:\n' + actions + '\n\n' : ''}${lastResult.simplified_text}`;
+    navigator.clipboard.writeText(text).then(() => showToast('📋 Copied to clipboard!')).catch(() => showToast('❌ Could not copy'));
+  };
+
+  // Start over
+  window.startOver = function() {
+    window.speechSynthesis.cancel();
+    lastResult = null;
+    lastClinician = null;
+    document.getElementById('resultSection').classList.add('hidden');
+    document.getElementById('clinicianSection').classList.add('hidden');
+    document.getElementById('loadingSection').classList.add('hidden');
+    document.getElementById('inputSection').classList.remove('hidden');
+    document.getElementById('simplifyBtn').classList.add('pulse-gentle');
+  };
+
+  // History
+  function saveToHistory(original, result) {
+    const history = JSON.parse(localStorage.getItem('cleartext_history') || '[]');
+    history.unshift({
+      id: Date.now(),
+      date: new Date().toLocaleDateString(),
+      preview: original.substring(0, 100) + '...',
+      original: original.substring(0, 5000),
+      result,
+      docType: document.getElementById('docType').value,
+      level: document.getElementById('readingLevel').value
+    });
+    // Keep last 20
+    if (history.length > 20) history.length = 20;
+    localStorage.setItem('cleartext_history', JSON.stringify(history));
+  }
+
+  window.showHistory = function() {
+    const history = JSON.parse(localStorage.getItem('cleartext_history') || '[]');
+    const list = document.getElementById('historyList');
+    
+    if (history.length === 0) {
+      list.innerHTML = '<p class="text-center text-textLight py-8">No simplifications yet. Try one! ✨</p>';
+    } else {
+      list.innerHTML = history.map(item => `
+        <div class="history-item bg-white rounded-xl p-3 border border-warmDark/20 cursor-pointer" onclick="loadHistoryItem(${item.id})">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-textLight">${item.date}</span>
+            <span class="text-xs bg-accent rounded px-2 py-0.5">${item.docType || 'document'}</span>
+          </div>
+          <p class="text-sm text-textDark line-clamp-2">${escapeHtml(item.preview)}</p>
+        </div>
+      `).join('');
+    }
+    document.getElementById('historyModal').classList.remove('hidden');
+  };
+
+  window.loadHistoryItem = function(id) {
+    const history = JSON.parse(localStorage.getItem('cleartext_history') || '[]');
+    const item = history.find(h => h.id === id);
+    if (!item) return;
+    
+    document.getElementById('docInput').value = item.original;
+    if (item.level) document.getElementById('readingLevel').value = item.level;
+    if (item.docType) document.getElementById('docType').value = item.docType;
+    updateLevelDisplay(item.level || 2);
+    
+    lastResult = item.result;
+    renderSeniorView(item.result);
+    
+    closeHistory();
+    document.getElementById('inputSection').classList.add('hidden');
+    document.getElementById('resultSection').classList.remove('hidden');
+    currentMode = 'senior';
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === 'senior'));
+  };
+
+  window.closeHistory = function() {
+    document.getElementById('historyModal').classList.add('hidden');
+  };
+
+  window.clearHistory = function() {
+    localStorage.removeItem('cleartext_history');
+    showToast('🗑️ History cleared.');
+  };
+
+  // Settings
+  window.showSettings = function() {
+    const settings = JSON.parse(localStorage.getItem('cleartext_settings') || '{}');
+    document.getElementById('highContrast').checked = settings.highContrast || false;
+    document.getElementById('autoSpeak').checked = settings.autoSpeak || false;
+    document.getElementById('userName').value = settings.userName || '';
+    document.getElementById('settingsModal').classList.remove('hidden');
+  };
+
+  window.closeSettings = function() {
+    document.getElementById('settingsModal').classList.add('hidden');
+  };
+
+  window.saveSettings = function() {
+    const settings = {
+      fontSize: parseInt(document.body.style.fontSize) || 18,
+      highContrast: document.getElementById('highContrast').checked,
+      autoSpeak: document.getElementById('autoSpeak').checked,
+      userName: document.getElementById('userName').value
+    };
+    localStorage.setItem('cleartext_settings', JSON.stringify(settings));
+    showToast('💾 Settings saved!');
+  };
+
+  function loadSettings() {
+    const settings = JSON.parse(localStorage.getItem('cleartext_settings') || '{}');
+    if (settings.fontSize) document.body.style.fontSize = settings.fontSize + 'px';
+    if (settings.highContrast) document.body.classList.add('high-contrast');
+  }
+
+  window.setFontSize = function(size) {
+    document.body.style.fontSize = size + 'px';
+  };
+
+  window.toggleContrast = function() {
+    document.body.classList.toggle('high-contrast');
+  };
+
+  // Helpers
+  function updateProgress(percent, text) {
+    document.getElementById('progressBar').style.width = percent + '%';
+    document.getElementById('loadingStatus').textContent = text;
+  }
+
+  function showToast(msg) {
+    const toast = document.getElementById('toast');
+    document.getElementById('toastMsg').textContent = msg;
+    toast.classList.remove('hidden');
+    setTimeout(() => toast.classList.add('hidden'), 4000);
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Load voices for speech
+  if (window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+  }
+})();
+</script>
+
+<style>
+  .high-contrast body, .high-contrast { background: #000 !important; color: #fff !important; }
+  .high-contrast .bg-white { background: #1a1a1a !important; }
+  .high-contrast .text-primary { color: #7CB9E8 !important; }
+  .high-contrast .text-textDark { color: #fff !important; }
+  .high-contrast .border-accent { border-color: #555 !important; }
+  .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+</style>
+</body>
+</html>
